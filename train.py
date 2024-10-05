@@ -28,25 +28,20 @@ def energy_ratio(signal):
     low_freq_band = (0.1, 1.0)
     high_freq_band = (2.0, 3.0)
 
-    # Compute the FFT
     n = len(signal)
     fft_result = np.fft.fft(signal)
-    
-    # Compute the frequencies corresponding to the FFT result
+
     freqs = np.fft.fftfreq(n, d=1/SAMPLING_RATE)
-    
-    # Compute the energy in the frequency bands
+
     low_band_energy = np.sum(np.abs(fft_result[(freqs >= low_freq_band[0]) & (freqs <= low_freq_band[1])])**2)
     high_band_energy = np.sum(np.abs(fft_result[(freqs >= high_freq_band[0]) & (freqs <= high_freq_band[1])])**2)
 
-    # Compute total energy
     total_energy = np.sum(np.abs(fft_result)**2)
 
-    #  Calculate energy ratio
     if total_energy == 0:  # To avoid division by zero
         return 0.0
     
-    energy_ratio = low_band_energy / total_energy  # Change to high_band_energy if needed
+    energy_ratio = low_band_energy / total_energy 
 
     return energy_ratio
 
@@ -64,43 +59,42 @@ def get_dominant_freq(window):
     yf = fft(window)
     xf = fftfreq(SAMPLES_PER_WINDOW, 1 / SAMPLING_RATE)  # Frequency bins
 
-    # Calculate the power spectrum
     power_spectrum = np.abs(yf) ** 2
-
-    # Find the index of the maximum power
     peak_index = np.argmax(power_spectrum)
     
-    # Return the corresponding frequency
     return xf[peak_index]
 
 
-def extract_data(file_path):
-    data_path = file_path + "\\data\\S12_GradeA"
+def extract_data(file_path, window_num, num_sample):
     data = dict()
 
-    for file in os.listdir(data_path):
+    for file in os.listdir(file_path):
         if file[-3:] == "csv":
             continue
 
-        st = obspy.read(data_path + "\\" + file)
+        st = obspy.read(file_path + "\\" + file)
 
         tr = st[0]
         tr.data = bandpass(tr.data, freqmin=0.1, freqmax=5, df=tr.stats.sampling_rate)
 
-        windows = tr[-WINDOW_NUM * SAMPLES_PER_WINDOW:].reshape((WINDOW_NUM, SAMPLES_PER_WINDOW))
+        windows = tr[-window_num * num_sample:].reshape((window_num, num_sample))  # Info at the end generally more important
+
 
         # EXTRACTING NON-TEMPORAL FEATURES
-        non_temp_features = [energy_ratio(tr.data).item()] #, np.angle(np.fft.fft(tr.data)).item()] # Energy ratio, Phase info, 
+        # non_temp_features = [energy_ratio(tr.data).item()] #, np.angle(np.fft.fft(tr.data)).item()] # Energy ratio, Phase info, 
 
         # EXTRACTING TEMPORAL FEATURES
         features = [] # Format: tuple of features for each window: (Entropy, RMS Amplitude, Peak Amplitude, Dominant frequency)
 
         for window in windows:
-            features.append((calculate_entropy(window).item(), np.sqrt(np.mean(window**2)).item(), np.max(window).item(), get_dominant_freq(window).item()))
+            features.append((calculate_entropy(window), np.sqrt(np.mean(window**2)), np.max(window), get_dominant_freq(window)))
 
 
-        data[file[-15:-6]] = (windows, features, non_temp)   # Extracting evid number
+        data[file[-15:-6]] = (windows, features) #, non_temp_features)   # Extracting evid number
     
+    return data
+
+def extract_labels(file_path):
     mq_type_dict = {"impact_mq": 0, "deep_mq": 1, "shallow_mq": 1}
 
     labels = [] # Label format: evid  time_rel(sec)   mq_type
@@ -110,8 +104,7 @@ def extract_data(file_path):
         for row in rows:
             labels.append([row[3], row[2], mq_type_dict[row[4]]])
 
-    return labels, data
-
+    return labels
 
 def create_model():
     # Define input for velocity data (sequential)
@@ -159,19 +152,21 @@ def main():
 
     # path = "Python\space_apps_2024_seismic_detection\data\lunar\training"
 
-    # labels, data = extract_data(sys.argv[1]) # Data Format: Dict keys: evid, Dict values: (Vel windows, temp features)
+    data = extract_data(sys.argv[1]) # Data Format: Dict keys: evid, Dict values: (Vel windows, temp features)
                                             #  Label Format: (evid, time_rel(sec), mq_type)
 
-    # vel_array = np.array([data[label[0]][0] for label in labels])
-    # feature_array = np.array([data[label[0]][1] for label in labels])
-    # label_array = np.array([label[1:] for label in labels])
+    labels = extract_labels(sys.argv[1], WINDOW_NUM, SAMPLES_PER_WINDOW)
 
-    with open("Python\\NASA-Space-Apps\\vel_array.pickle", "rb") as pf:
-        vel_array = pickle.load(pf)
-    with open("Python\\NASA-Space-Apps\\feature_array.pickle", "rb") as pf:
-        feature_array = pickle.load(pf)
-    with open("Python\\NASA-Space-Apps\\label_array.pickle", "rb") as pf:
-        label_array = pickle.load(pf)
+    vel_array = np.array([data[label[0]][0] for label in labels])
+    feature_array = np.array([data[label[0]][1] for label in labels])
+    label_array = np.array([label[1:] for label in labels])
+
+    # with open("Python\\NASA-Space-Apps\\vel_array.pickle", "rb") as pf:
+    #     vel_array = pickle.load(pf)
+    # with open("Python\\NASA-Space-Apps\\feature_array.pickle", "rb") as pf:
+    #     feature_array = pickle.load(pf)
+    # with open("Python\\NASA-Space-Apps\\label_array.pickle", "rb") as pf:
+    #     label_array = pickle.load(pf)
 
     X_velocity_train, X_velocity_test, X_temporal_train, X_temporal_test, y_classification_train, y_classification_test= train_test_split(
                                                                       vel_array, 
